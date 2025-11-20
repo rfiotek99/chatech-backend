@@ -4,7 +4,6 @@ import dotenv from 'dotenv';
 import jwt from 'jsonwebtoken';
 import bcryptjs from 'bcryptjs';
 import pkg from 'pg';
-import fetch from 'node-fetch';
 
 const { Pool } = pkg;
 const bcrypt = bcryptjs;
@@ -12,9 +11,20 @@ const bcrypt = bcryptjs;
 dotenv.config();
 
 const app = express();
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL
-});
+
+// Conectar a PostgreSQL con manejo de errores
+let pool;
+try {
+  pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    max: 20,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 2000,
+  });
+  console.log('✅ PostgreSQL pool created');
+} catch (e) {
+  console.error('Database error:', e.message);
+}
 
 app.use(express.json());
 app.use(cors({
@@ -22,9 +32,11 @@ app.use(cors({
   credentials: true
 }));
 
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+// Variables de entorno con valores por defecto
+const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-key-123456';
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || 'sk-test-key';
 
+// Middleware de autenticación
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
@@ -35,6 +47,8 @@ const authenticateToken = (req, res, next) => {
     next();
   });
 };
+
+// ============ AUTH ROUTES ============
 
 app.post('/api/auth/signup', async (req, res) => {
   try {
@@ -56,6 +70,7 @@ app.post('/api/auth/signup', async (req, res) => {
     const token = jwt.sign({ userId: user.id, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
     res.json({ token, user });
   } catch (error) {
+    console.error('Signup error:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -75,9 +90,12 @@ app.post('/api/auth/login', async (req, res) => {
     const token = jwt.sign({ userId: user.id, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
     res.json({ token, user: { id: user.id, email: user.email } });
   } catch (error) {
+    console.error('Login error:', error);
     res.status(500).json({ error: error.message });
   }
 });
+
+// ============ CHAT ROUTES ============
 
 app.post('/api/chats', authenticateToken, async (req, res) => {
   try {
@@ -88,6 +106,7 @@ app.post('/api/chats', authenticateToken, async (req, res) => {
     );
     res.json(result.rows[0]);
   } catch (error) {
+    console.error('Create chat error:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -100,6 +119,7 @@ app.get('/api/chats', authenticateToken, async (req, res) => {
     );
     res.json(result.rows);
   } catch (error) {
+    console.error('Get chats error:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -119,13 +139,17 @@ app.get('/api/chats/:chatId/messages', authenticateToken, async (req, res) => {
     );
     res.json(result.rows);
   } catch (error) {
+    console.error('Get messages error:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
+// ============ CHAT MESSAGE ENDPOINT ============
+
 app.post('/api/chat/message', authenticateToken, async (req, res) => {
   try {
     const { chatId, message, region } = req.body;
+    
     const chatCheck = await pool.query(
       'SELECT * FROM chats WHERE id = $1 AND user_id = $2',
       [chatId, req.user.userId]
@@ -134,69 +158,98 @@ app.post('/api/chat/message', authenticateToken, async (req, res) => {
       return res.status(403).json({ error: 'Access denied' });
     }
 
+    // Guardar mensaje del usuario
     await pool.query(
       'INSERT INTO messages (chat_id, role, content) VALUES ($1, $2, $3)',
       [chatId, 'user', message]
     );
 
+    // Prompts regionalizados
     const regions = {
-      argentina: 'Eres experto en e-commerce para Argentina. Responde en español.',
-      mexico: 'Eres experto en e-commerce para México. Responde en español.',
-      colombia: 'Eres experto en e-commerce para Colombia. Responde en español.',
-      españa: 'Eres experto en e-commerce para España. Responde en español.',
-      usa: 'You are an expert in e-commerce for USA. Respond in English.'
+      argentina: 'Eres experto en e-commerce para Argentina. Moneda: ARS. Sé conciso y práctico. Responde en español.',
+      mexico: 'Eres experto en e-commerce para México. Moneda: MXN. Responde en español.',
+      colombia: 'Eres experto en e-commerce para Colombia. Moneda: COP. Responde en español.',
+      españa: 'Eres experto en e-commerce para España. Moneda: EUR. Responde en español.',
+      usa: 'You are an expert in e-commerce for USA. Currency: USD. Be concise. Respond in English.'
     };
 
-    const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${OPENAI_API_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: regions[region] || regions.argentina },
-          { role: 'user', content: message }
-        ],
-        temperature: 0.7,
-        max_tokens: 1024
-      })
-    });
+    // Llamar a OpenAI
+    const systemPrompt = regions[region] || regions.argentina;
+    
+    try {
+      const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${OPENAI_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: message }
+          ],
+          temperature: 0.7,
+          max_tokens: 1024
+        })
+      });
 
-    const data = await openaiResponse.json();
-    if (data.error) {
-      return res.status(500).json({ error: data.error.message });
+      const data = await openaiResponse.json();
+      
+      if (data.error) {
+        console.error('OpenAI error:', data.error);
+        return res.status(500).json({ error: 'OpenAI API error: ' + data.error.message });
+      }
+
+      const assistantMessage = data.choices[0].message.content;
+      
+      // Guardar respuesta
+      const botMsgResult = await pool.query(
+        'INSERT INTO messages (chat_id, role, content) VALUES ($1, $2, $3) RETURNING *',
+        [chatId, 'assistant', assistantMessage]
+      );
+
+      res.json({ assistantMessage: botMsgResult.rows[0] });
+    } catch (openaiError) {
+      console.error('OpenAI fetch error:', openaiError);
+      res.status(500).json({ error: 'Failed to call OpenAI API' });
     }
-
-    const assistantMessage = data.choices[0].message.content;
-    const botMsgResult = await pool.query(
-      'INSERT INTO messages (chat_id, role, content) VALUES ($1, $2, $3) RETURNING *',
-      [chatId, 'assistant', assistantMessage]
-    );
-
-    res.json({ assistantMessage: botMsgResult.rows[0] });
   } catch (error) {
-    console.error(error);
+    console.error('Chat message error:', error);
     res.status(500).json({ error: error.message });
   }
 });
+
+// ============ USER ROUTES ============
 
 app.get('/api/profile', authenticateToken, async (req, res) => {
   try {
     const user = await pool.query('SELECT id, email, plan FROM users WHERE id = $1', [req.user.userId]);
     const company = await pool.query('SELECT * FROM companies WHERE user_id = $1', [req.user.userId]);
-    res.json({ user: user.rows[0], company: company.rows[0] });
+    res.json({ 
+      user: user.rows[0], 
+      company: company.rows[0] 
+    });
   } catch (error) {
+    console.error('Profile error:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
+// ============ HEALTH CHECK ============
+
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'OK', timestamp: new Date() });
+  res.json({ 
+    status: 'OK', 
+    timestamp: new Date(),
+    database: pool ? 'connected' : 'disconnected'
+  });
 });
+
+// ============ START SERVER ============
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`✅ ChatEch Backend running on port ${PORT}`);
+  console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
 });
