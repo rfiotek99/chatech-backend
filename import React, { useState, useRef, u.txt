@@ -1,0 +1,371 @@
+import React, { useState, useRef, useEffect } from 'react';
+
+function GlobalChatbot() {
+  const [region, setRegion] = useState(null);
+  const [chats, setChats] = useState(() => {
+    const saved = localStorage.getItem('global_chats');
+    return saved ? JSON.parse(saved) : [];
+  });
+
+  const [activeChat, setActiveChat] = useState(null);
+  const [input, setInput] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [apiKey, setApiKey] = useState(() => localStorage.getItem('openai_api_key') || '');
+  const [showApiInput, setShowApiInput] = useState(() => {
+    const saved = localStorage.getItem('openai_api_key');
+    return !saved || saved.trim() === '';
+  });
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const messagesEnd = useRef(null);
+
+  // DATOS POR REGIÓN
+  const regions = {
+    argentina: {
+      name: "🇦🇷 Argentina",
+      currency: "ARS",
+      platforms: ["MercadoLibre", "Shopify", "Instagram Shop"],
+      logistics: ["Correo Argentino", "OCA", "Andreani"],
+      payments: "Mercado Pago (3.99%), Shopify (1.6%)",
+      taxes: "AFIP - IVA/IG",
+      marketInfo: "MercadoLibre domina. Mercado Pago es estándar."
+    },
+    mexico: {
+      name: "🇲🇽 México",
+      currency: "MXN",
+      platforms: ["Shopify", "Mercado Libre México", "Facebook Shop"],
+      logistics: ["Estafeta", "FedEx", "DHL"],
+      payments: "Mercado Pago (2.99%), Stripe (2.9%)",
+      taxes: "SAT - IVA 16%",
+      marketInfo: "Shopify fuerte. Stripe popular."
+    },
+    colombia: {
+      name: "🇨🇴 Colombia",
+      currency: "COP",
+      platforms: ["Shopify", "Mercado Libre Colombia", "OLX"],
+      logistics: ["Servientrega", "TCC", "Coordinadora"],
+      payments: "Mercado Pago (3.49%), Stripe (3.9%)",
+      taxes: "DIAN - IVA 19%",
+      marketInfo: "Shopify premium. PSE es local."
+    },
+    españa: {
+      name: "🇪🇸 España",
+      currency: "EUR",
+      platforms: ["Shopify", "Amazon.es", "Milanuncios"],
+      logistics: ["Correos", "DHL", "UPS"],
+      payments: "Stripe (1.4%), PayPal (3.4%)",
+      taxes: "Hacienda - IVA 21%",
+      marketInfo: "Shopify estándar. Stripe muy usado."
+    },
+    usa: {
+      name: "🇺🇸 USA",
+      currency: "USD",
+      platforms: ["Shopify", "Amazon.com", "WooCommerce"],
+      logistics: ["USPS", "FedEx", "UPS"],
+      payments: "Stripe (2.9%), Square (2.6%)",
+      taxes: "IRS - Self-employment 15.3%",
+      marketInfo: "Shopify domina. Stripe estándar."
+    },
+    chile: {
+      name: "🇨🇱 Chile",
+      currency: "CLP",
+      platforms: ["Shopify", "Linio", "Mercado Libre Chile"],
+      logistics: ["Correos Chile", "StarkenExpress"],
+      payments: "Mercado Pago (3.49%), Stripe (3.45%)",
+      taxes: "SII - IVA 19%",
+      marketInfo: "Mercado Libre fuerte. Shopify crece."
+    },
+    brasil: {
+      name: "🇧🇷 Brasil",
+      currency: "BRL",
+      platforms: ["Shopify", "Mercado Libre Brasil"],
+      logistics: ["Correios", "Sedex", "Loggi"],
+      payments: "Mercado Pago (3.99%), Stripe (4.2%)",
+      taxes: "Receita - ICMS/PIS/IPI complejo",
+      marketInfo: "Mercado Libre gigante. Impuestos complejos."
+    }
+  };
+
+  const saveApiKey = () => {
+    if (apiKey.trim()) {
+      localStorage.setItem('openai_api_key', apiKey);
+      setShowApiInput(false);
+    }
+  };
+
+  useEffect(() => {
+    localStorage.setItem('global_chats', JSON.stringify(chats));
+  }, [chats]);
+
+  useEffect(() => {
+    if (messagesEnd.current) {
+      messagesEnd.current.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [activeChat?.messages]);
+
+  const getAIResponse = async (message) => {
+    if (!apiKey) {
+      return "❌ API Key no configurada. Haz clic en⚙️";
+    }
+
+    const regionData = regions[region];
+    const systemPrompt = `Eres un EXPERTO EN E-COMMERCE para ${regionData.name}.
+
+DATOS DE MERCADO:
+- Moneda: ${regionData.currency}
+- Plataformas: ${regionData.platforms.join(", ")}
+- Logística: ${regionData.logistics.join(", ")}
+- Pagos: ${regionData.payments}
+- Impuestos: ${regionData.taxes}
+- Contexto: ${regionData.marketInfo}
+
+INSTRUCCIONES:
+1. Responde directo y conciso
+2. Usa moneda y plataformas locales
+3. Sé específico con números reales
+4. Máximo 400 palabras
+5. Si preguntan sobre impuestos/legal: "Consult con contador/abogado local"
+6. Sé práctico, soluciones implementables HOY`;
+
+    try {
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: message }
+          ],
+          temperature: 0.7,
+          max_tokens: 1024,
+        })
+      });
+
+      const data = await response.json();
+      if (data.error) {
+        return `❌ Error: ${data.error.message}`;
+      }
+      return data.choices[0].message.content;
+    } catch (error) {
+      return "❌ Error de conexión.";
+    }
+  };
+
+  const newChat = () => {
+    const chat = {
+      id: Date.now(),
+      title: "Nuevo chat",
+      messages: [],
+      region: region
+    };
+    setChats([chat, ...chats]);
+    setActiveChat(chat);
+  };
+
+  const sendMessage = async (e) => {
+    e.preventDefault();
+    if (!input.trim() || !activeChat) return;
+
+    setIsLoading(true);
+    const userMsg = { role: 'user', text: input };
+    const newMessages = [...activeChat.messages, userMsg];
+
+    const updatedChat = {
+      ...activeChat,
+      messages: newMessages,
+      title: activeChat.messages.length === 0 ? input.slice(0, 30) : activeChat.title
+    };
+
+    setActiveChat(updatedChat);
+    setChats(chats.map(c => c.id === activeChat.id ? updatedChat : c));
+    setInput("");
+
+    const botResponse = await getAIResponse(input);
+    const botMsg = { role: 'assistant', text: botResponse };
+    const finalMessages = [...newMessages, botMsg];
+    const finalChat = { ...updatedChat, messages: finalMessages };
+
+    setActiveChat(finalChat);
+    setChats(chats.map(c => c.id === activeChat.id ? finalChat : c));
+    setIsLoading(false);
+  };
+
+  const deleteChat = (id) => {
+    const filtered = chats.filter(c => c.id !== id);
+    setChats(filtered);
+    if (activeChat?.id === id) {
+      setActiveChat(filtered.length > 0 ? filtered[0] : null);
+    }
+  };
+
+  const changeRegion = (newRegion) => {
+    setRegion(newRegion);
+  };
+
+  // SCREEN: API Key
+  if (showApiInput) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', backgroundColor: '#fff' }}>
+        <div style={{ backgroundColor: '#fff', padding: '40px', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', maxWidth: '420px', width: '90%' }}>
+          <h2 style={{ fontSize: '24px', fontWeight: '600', marginBottom: '16px', color: '#000' }}>API Key de OpenAI</h2>
+          <p style={{ color: '#666', marginBottom: '20px', fontSize: '14px' }}>
+            Obtén una gratis en <a href="https://platform.openai.com/api/keys" target="_blank" rel="noopener noreferrer" style={{ color: '#0066cc', textDecoration: 'none' }}>platform.openai.com</a>
+          </p>
+          <input
+            type="password"
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            placeholder="sk-..."
+            style={{ width: '100%', padding: '10px', marginBottom: '12px', borderRadius: '6px', border: '1px solid #d1d5db', fontSize: '14px', boxSizing: 'border-box' }}
+          />
+          <button
+            onClick={saveApiKey}
+            disabled={!apiKey.trim()}
+            style={{ width: '100%', padding: '10px', backgroundColor: apiKey.trim() ? '#000' : '#ccc', color: 'white', border: 'none', borderRadius: '6px', fontSize: '14px', fontWeight: '600', cursor: apiKey.trim() ? 'pointer' : 'not-allowed' }}
+          >
+            Guardar
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // SCREEN: Select Region (solo si no hay región)
+  if (!region && chats.length === 0) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', backgroundColor: '#fff' }}>
+        <div style={{ maxWidth: '600px', width: '90%', textAlign: 'center' }}>
+          <h1 style={{ fontSize: '32px', fontWeight: '600', marginBottom: '8px', color: '#000' }}>E-commerce Global</h1>
+          <p style={{ fontSize: '14px', color: '#666', marginBottom: '32px' }}>Elige tu país</p>
+          
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '12px' }}>
+            {Object.entries(regions).map(([key, data]) => (
+              <button
+                key={key}
+                onClick={() => { setRegion(key); newChat(); }}
+                style={{ padding: '16px', backgroundColor: '#f5f5f5', border: '1px solid #e5e7eb', borderRadius: '8px', cursor: 'pointer', fontSize: '14px', fontWeight: '500', color: '#000', transition: 'all 0.2s' }}
+                onMouseEnter={(e) => { e.target.style.backgroundColor = '#e5e7eb'; }}
+                onMouseLeave={(e) => { e.target.style.backgroundColor = '#f5f5f5'; }}
+              >
+                {data.name}
+              </button>
+            ))}
+          </div>
+
+          <button onClick={() => setShowApiInput(true)} style={{ marginTop: '32px', color: '#666', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', textDecoration: 'underline', fontSize: '13px' }}>
+            ⚙️ Cambiar API Key
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // SCREEN: Main Chat
+  return (
+    <div style={{ display: 'flex', height: '100vh', backgroundColor: '#fff' }}>
+      {/* Sidebar */}
+      <div style={{ 
+        width: sidebarOpen ? '280px' : '0px',
+        backgroundColor: '#fff',
+        borderRight: '1px solid #e5e7eb',
+        display: 'flex',
+        flexDirection: 'column',
+        transition: 'width 0.3s',
+        overflow: 'hidden'
+      }}>
+        <div style={{ padding: '16px', borderBottom: '1px solid #e5e7eb' }}>
+          <button onClick={newChat} style={{ width: '100%', padding: '10px', backgroundColor: '#000', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '14px', marginBottom: '12px' }}>
+            ➕ Nuevo
+          </button>
+          {region && (
+            <select value={region} onChange={(e) => changeRegion(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #e5e7eb', fontSize: '13px', cursor: 'pointer' }}>
+              {Object.entries(regions).map(([key, data]) => (
+                <option key={key} value={key}>{data.name}</option>
+              ))}
+            </select>
+          )}
+        </div>
+
+        <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
+          {chats.map(c => (
+            <div key={c.id} onClick={() => setActiveChat(c)} style={{ padding: '12px', borderRadius: '6px', backgroundColor: activeChat?.id === c.id ? '#f0f0f0' : 'transparent', cursor: 'pointer', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: '13px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1, color: '#000' }}>{c.title}</span>
+              <button onClick={(e) => { e.stopPropagation(); deleteChat(c.id); }} style={{ backgroundColor: 'transparent', border: 'none', cursor: 'pointer', color: '#999', padding: '4px', fontSize: '13px' }}>✕</button>
+            </div>
+          ))}
+        </div>
+
+
+      </div>
+
+      {/* Chat Area */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+        {/* Header */}
+        <div style={{ padding: '16px', borderBottom: '1px solid #e5e7eb', display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <button onClick={() => setSidebarOpen(!sidebarOpen)} style={{ padding: '6px', backgroundColor: 'transparent', border: '1px solid #e5e7eb', borderRadius: '6px', cursor: 'pointer', fontSize: '16px' }}>
+            ☰
+          </button>
+          {region && <span style={{ fontSize: '14px', fontWeight: '600', color: '#000' }}>{regions[region].name}</span>}
+        </div>
+
+        {activeChat ? (
+          <>
+            {/* Messages */}
+            <div style={{ flex: 1, overflowY: 'auto', padding: '20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {activeChat.messages.length === 0 && (
+                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999' }}>
+                  <p>Comienza a escribir...</p>
+                </div>
+              )}
+              
+              {activeChat.messages.map((msg, i) => (
+                <div key={i} style={{ display: 'flex', justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start' }}>
+                  <div style={{ maxWidth: '65%', padding: '10px 14px', borderRadius: '12px', backgroundColor: msg.role === 'user' ? '#000' : '#f5f5f5', color: msg.role === 'user' ? 'white' : '#000', fontSize: '14px', lineHeight: '1.6', whiteSpace: 'pre-wrap' }}>
+                    {msg.text}
+                  </div>
+                </div>
+              ))}
+
+              {isLoading && (
+                <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+                  <div style={{ padding: '10px 14px', borderRadius: '12px', backgroundColor: '#f5f5f5', fontSize: '14px', color: '#666' }}>
+                    ✓ Pensando...
+                  </div>
+                </div>
+              )}
+
+              <div ref={messagesEnd} />
+            </div>
+
+            {/* Input */}
+            <form onSubmit={sendMessage} style={{ padding: '16px', borderTop: '1px solid #e5e7eb', display: 'flex', gap: '10px' }}>
+              <input 
+                type="text" 
+                value={input} 
+                onChange={(e) => setInput(e.target.value)} 
+                placeholder="Escribe un mensaje..." 
+                style={{ flex: 1, padding: '10px 14px', borderRadius: '6px', border: '1px solid #e5e7eb', fontSize: '14px', outline: 'none' }}
+                onFocus={(e) => e.target.style.borderColor = '#000'}
+                onBlur={(e) => e.target.style.borderColor = '#e5e7eb'}
+              />
+              <button type="submit" disabled={isLoading || !input.trim()} style={{ padding: '10px 16px', backgroundColor: '#000', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', opacity: isLoading ? 0.5 : 1 }}>
+                →
+              </button>
+            </form>
+          </>
+        ) : (
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999' }}>
+            <button onClick={newChat} style={{ padding: '10px 20px', backgroundColor: '#000', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '14px' }}>
+              ➕ Nuevo chat
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export default GlobalChatbot;
