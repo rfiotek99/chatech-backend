@@ -24,12 +24,8 @@ app.get('/api/test', (req, res) => {
   });
 });
 
-app.post('/test-post', (req, res) => {
-  res.json({ post: 'works' });
-});
-
-app.post('/api/chat', (req, res) => {
-  const { message } = req.body;
+app.get('/api/chat', (req, res) => {
+  const message = req.query.message;
 
   if (!message) {
     return res.status(400).json({ error: 'Message is required' });
