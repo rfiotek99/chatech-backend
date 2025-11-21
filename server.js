@@ -5,6 +5,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const app = express();
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
 app.use(express.json());
 app.use(cors());
@@ -24,18 +25,47 @@ app.get('/api/test', (req, res) => {
   });
 });
 
-app.get('/api/chat', (req, res) => {
+app.get('/api/chat', async (req, res) => {
   const message = req.query.message;
 
   if (!message) {
     return res.status(400).json({ error: 'Message is required' });
   }
 
-  res.json({
-    userMessage: message,
-    botResponse: `Echo: ${message}`,
-    timestamp: new Date().toISOString()
-  });
+  if (!OPENAI_API_KEY) {
+    return res.status(500).json({ error: 'OpenAI API key not configured' });
+  }
+
+  try {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${OPENAI_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: 'gpt-3.5-turbo',
+        messages: [{ role: 'user', content: message }],
+        max_tokens: 150
+      })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      return res.status(response.status).json({ error: data.error.message });
+    }
+
+    const botResponse = data.choices[0].message.content;
+
+    res.json({
+      userMessage: message,
+      botResponse: botResponse,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 app.use((req, res) => {
