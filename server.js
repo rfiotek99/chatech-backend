@@ -9,7 +9,6 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-// Health check
 app.get('/api/health', (req, res) => {
   res.json({ 
     status: 'OK',
@@ -18,7 +17,6 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Test endpoint
 app.get('/api/test', (req, res) => {
   res.json({ 
     test: 'working',
@@ -26,7 +24,6 @@ app.get('/api/test', (req, res) => {
   });
 });
 
-// Chat endpoint - básico (sin OpenAI aún)
 app.post('/api/chat', (req, res) => {
   const { message } = req.body;
 
@@ -34,7 +31,6 @@ app.post('/api/chat', (req, res) => {
     return res.status(400).json({ error: 'Message is required' });
   }
 
-  // Por ahora, solo devuelve un echo del mensaje
   res.json({
     userMessage: message,
     botResponse: `Echo: ${message}`,
@@ -42,7 +38,6 @@ app.post('/api/chat', (req, res) => {
   });
 });
 
-// Catch all
 app.use((req, res) => {
   res.status(404).json({ error: 'Endpoint not found' });
 });
