@@ -24,6 +24,20 @@ app.get('/api/test', (req, res) => {
   });
 });
 
+app.post('/api/chat', (req, res) => {
+  const { message } = req.body;
+
+  if (!message) {
+    return res.status(400).json({ error: 'Message is required' });
+  }
+
+  res.json({
+    userMessage: message,
+    botResponse: `Echo: ${message}`,
+    timestamp: new Date().toISOString()
+  });
+});
+
 app.use((req, res) => {
   res.status(404).json({ error: 'Endpoint not found' });
 });
