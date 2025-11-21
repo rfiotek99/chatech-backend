@@ -24,6 +24,10 @@ app.get('/api/test', (req, res) => {
   });
 });
 
+app.post('/test-post', (req, res) => {
+  res.json({ post: 'works' });
+});
+
 app.post('/api/chat', (req, res) => {
   const { message } = req.body;
 
