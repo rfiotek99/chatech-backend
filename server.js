@@ -3,6 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
+import { createClient } from '@supabase/supabase-js';
 
 dotenv.config();
 
@@ -10,12 +11,14 @@ const app = express();
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const JWT_SECRET = process.env.JWT_SECRET || 'tu-secreto-super-seguro-cambiar-en-produccion';
 
+// Inicializar Supabase
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_KEY
+);
+
 app.use(express.json());
 app.use(cors());
-
-// Base de datos simulada (en memoria)
-const users = [];
-const chats = [];
 
 // Middleware para verificar JWT
 const verifyToken = (req, res, next) => {
@@ -61,22 +64,29 @@ app.post('/api/auth/register', async (req, res) => {
     }
 
     // Verificar si el usuario ya existe
-    if (users.find(u => u.email === email)) {
+    const { data: existingUser } = await supabase
+      .from('users')
+      .select('id')
+      .eq('email', email)
+      .single();
+
+    if (existingUser) {
       return res.status(400).json({ error: 'Usuario ya existe' });
     }
 
     // Encriptar contraseña
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Crear usuario
-    const user = {
-      id: Date.now().toString(),
-      email,
-      password: hashedPassword,
-      createdAt: new Date().toISOString()
-    };
+    // Crear usuario en Supabase
+    const { data: user, error } = await supabase
+      .from('users')
+      .insert([{ email, password: hashedPassword }])
+      .select()
+      .single();
 
-    users.push(user);
+    if (error) {
+      return res.status(400).json({ error: error.message });
+    }
 
     // Generar token
     const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '24h' });
@@ -100,9 +110,14 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(400).json({ error: 'Email y password requeridos' });
     }
 
-    // Buscar usuario
-    const user = users.find(u => u.email === email);
-    if (!user) {
+    // Buscar usuario en Supabase
+    const { data: user, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('email', email)
+      .single();
+
+    if (error || !user) {
       return res.status(401).json({ error: 'Credenciales inválidas' });
     }
 
@@ -159,21 +174,43 @@ app.get('/api/chat', verifyToken, async (req, res) => {
 
     const botResponse = data.choices[0].message.content;
 
-    // Guardar chat en la "base de datos"
-    const chat = {
-      id: Date.now().toString(),
-      userId: req.userId,
-      userMessage: message,
-      botResponse: botResponse,
-      timestamp: new Date().toISOString()
-    };
-    chats.push(chat);
+    // Guardar chat en Supabase
+    const { error: insertError } = await supabase
+      .from('chats')
+      .insert([{
+        user_id: req.userId,
+        user_message: message,
+        bot_response: botResponse
+      }]);
+
+    if (insertError) {
+      console.error('Error saving chat:', insertError);
+    }
 
     res.json({
       userMessage: message,
       botResponse: botResponse,
-      timestamp: chat.timestamp
+      timestamp: new Date().toISOString()
     });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Obtener historial de chats
+app.get('/api/chats/history', verifyToken, async (req, res) => {
+  try {
+    const { data: chats, error } = await supabase
+      .from('chats')
+      .select('*')
+      .eq('user_id', req.userId)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      return res.status(400).json({ error: error.message });
+    }
+
+    res.json({ chats });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
